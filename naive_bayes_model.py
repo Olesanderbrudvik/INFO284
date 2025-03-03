@@ -5,6 +5,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 from typing import Optional
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+
 
 class SentimentAnalyzer:
     def __init__(self, data_path: str, n_features: int = 10000, sample_frac: Optional[float] = None):
@@ -72,3 +76,16 @@ class SentimentAnalyzer:
 if __name__ == "__main__":
     analyzer = SentimentAnalyzer(data_path="hotel_reviews.csv", sample_frac=0.1)
     analyzer.run()
+
+
+#konfusjonsmatrise
+y_pred = analyzer.model_pipeline.predict(analyzer.X_test)
+cm = confusion_matrix(analyzer.y_test, y_pred)
+
+# Visualiser konfusjonsmatrisen
+plt.figure(figsize=(5, 4))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=['Negative', 'Positive'], yticklabels=['Negative', 'Positive'])
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.title("Confusion Matrix")
+plt.show()
