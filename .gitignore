@@ -2,3 +2,4 @@
 .DS_Store
 
 sentiment_env/venv_python.3.12/*.csv
+venv_python.3.12/
