@@ -1,6 +1,8 @@
 import os
+import re
 import pandas as pd
 import hashlib
+from num2words import num2words
 
 # Get the directory where the current script is located
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -11,6 +13,46 @@ output_file = os.path.join(current_dir, "hotel_reviews_processed.csv")
 filtered_file = os.path.join(current_dir, "hotel_reviews_filtered.csv")
 summary_csv = os.path.join(current_dir, "5_reviews_summary.csv")
 
+def replace_numbers_with_words(text: str) -> str:
+    """
+    Replace numbers in a text with their English word representation.
+    The process is:
+      1. Replace ordinal numbers (e.g. "30th" -> "thirtieth").
+      2. Insert spaces between numbers and letters (e.g. "30pm" becomes "30 pm").
+      3. Replace standalone numbers (including decimals) with words.
+    """
+    # 1. Replace ordinals (e.g. "30th" -> "thirtieth")
+    def ordinal_repl(match):
+        try:
+            number = int(match.group(1))
+            return num2words(number, ordinal=True)
+        except Exception:
+            return match.group(0)
+    text = re.sub(r'\b(\d+)(st|nd|rd|th)\b', ordinal_repl, text)
+    
+    # 2. Insert spaces between numbers and letters to separate them.
+    #    This handles cases like "30pm" or "240v" regardless of order.
+    text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)
+    text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', text)
+    
+    # 3. Replace standalone numbers (including decimals)
+    def cardinal_repl(match):
+        num_str = match.group(0)
+        num_str_fixed = num_str.replace(',', '.')
+        try:
+            if '.' in num_str_fixed:
+                integer_part, fractional_part = num_str_fixed.split('.')
+                words = num2words(int(integer_part))
+                fractional_words = " ".join(num2words(int(digit)) for digit in fractional_part)
+                return f"{words} point {fractional_words}"
+            else:
+                number = int(num_str_fixed)
+                return num2words(number)
+        except Exception:
+            return num_str
+    text = re.sub(r'\b\d+([,.]\d+)?\b', cardinal_repl, text)
+    return text
+
 class HotelReviewProcessor:
     """
     A class for reading, cleaning, and organizing a large CSV file containing hotel reviews.
@@ -18,13 +60,6 @@ class HotelReviewProcessor:
     """
     
     def __init__(self, input_file: str, output_file: str, chunk_size: int = 10000):
-        """
-        Initialize the processor with file paths and chunk size.
-        
-        :param input_file: The path to the original CSV file.
-        :param output_file: The path to the processed CSV file.
-        :param chunk_size: The number of rows to process per chunk.
-        """
         self.input_file = input_file
         self.output_file = output_file
         self.chunk_size = chunk_size
@@ -32,9 +67,6 @@ class HotelReviewProcessor:
     def reorder_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Move the review columns ('negative_review' and 'positive_review') to the end.
-        
-        :param df: DataFrame with all columns.
-        :return: DataFrame with the review columns moved to the end.
         """
         review_cols = ['negative_review', 'positive_review']
         other_cols = [col for col in df.columns if col not in review_cols]
@@ -46,15 +78,9 @@ class HotelReviewProcessor:
         Process a chunk of data by:
           - Renaming columns to a consistent structure.
           - Converting dates to datetime.
-          - Cleaning numeric columns (if needed) and recalculating
-            'neg_word_count' and 'pos_word_count' based on the actual review text.
-          - Replacing missing or empty review texts with an empty string placeholder.
-          - Reorganizing columns so that the review texts are at the end.
-        
-        Recalculating word counts ensures that the values are correct, independent of the original file's values.
-        
-        :param chunk: A Pandas DataFrame representing a chunk of data.
-        :return: The processed chunk.
+          - Cleaning numeric columns and recalculating word counts.
+          - Replacing missing review texts with an empty string.
+          - Reorganizing columns so that review texts are at the end.
         """
         rename_map = {
             'Hotel_Address': 'address',
@@ -89,11 +115,11 @@ class HotelReviewProcessor:
         if 'review_date' in chunk.columns:
             chunk['review_date'] = pd.to_datetime(chunk['review_date'], errors='coerce')
         
-        # Replace missing or empty review texts with an empty string placeholder.
+        # Replace missing or empty review texts with an empty string.
         chunk['negative_review'] = chunk['negative_review'].fillna('').astype(str)
         chunk['positive_review'] = chunk['positive_review'].fillna('').astype(str)
         
-        # Recalculate word counts from the review text to ensure correctness.
+        # Recalculate word counts from the review text.
         chunk['neg_word_count'] = chunk['negative_review'].apply(lambda x: len(str(x).split()))
         chunk['pos_word_count'] = chunk['positive_review'].apply(lambda x: len(str(x).split()))
         
@@ -117,15 +143,12 @@ def create_summary_column(df: pd.DataFrame) -> pd.DataFrame:
     """
     Create a new column 'full_review' that aggregates all information for each review
     into a formatted text paragraph.
-    
-    :param df: DataFrame with the processed data.
-    :return: A new DataFrame containing only the 'full_review' column.
     """
     review_cols = ['negative_review', 'positive_review']
     other_cols = [col for col in df.columns if col not in review_cols]
     summary_list = []
     
-    for i, (idx, row) in enumerate(df.iterrows()):
+    for i, (_, row) in enumerate(df.iterrows()):
         lines = []
         lines.append(f"Review {i + 1}:")
         for col in other_cols:
@@ -144,19 +167,12 @@ def create_summary_column(df: pd.DataFrame) -> pd.DataFrame:
 def count_nulls_per_column(file_path: str, chunk_size: int = 10000):
     """
     Count the number of null values for each column in the CSV file using chunked reading.
-    
-    :param file_path: Path to the CSV file.
-    :param chunk_size: Number of rows to process per chunk.
-    :return: Dictionary containing column names and their respective null value counts.
     """
     null_counts = {}
     for chunk in pd.read_csv(file_path, chunksize=chunk_size):
         chunk_nulls = chunk.isnull().sum().to_dict()
         for col, count in chunk_nulls.items():
-            if col in null_counts:
-                null_counts[col] += count
-            else:
-                null_counts[col] = count
+            null_counts[col] = null_counts.get(col, 0) + count
     sorted_null_counts = dict(sorted(null_counts.items(), key=lambda item: item[1], reverse=True))
     return sorted_null_counts
 
@@ -164,10 +180,6 @@ def export_summary_csv(processed_file: str, summary_csv: str, nrows: int = 5):
     """
     Read the processed CSV file, create a summary view with a specified number of reviews (default is 5),
     and export it to a CSV file.
-    
-    :param processed_file: File path to the processed CSV file.
-    :param summary_csv: File path to the new, summarized CSV file.
-    :param nrows: Number of reviews to include.
     """
     df = pd.read_csv(processed_file, nrows=nrows)
     summary_df = create_summary_column(df)
@@ -178,10 +190,6 @@ def count_duplicates(file_path: str, chunk_size: int = 10000) -> int:
     """
     Count duplicate rows in the CSV file using a hashing approach.
     This function attempts to count duplicates even across different chunks.
-    
-    :param file_path: Path to the CSV file.
-    :param chunk_size: Number of rows to process per chunk.
-    :return: Total count of duplicate rows.
     """
     seen_hashes = set()
     duplicate_count = 0
@@ -202,9 +210,6 @@ def count_duplicates(file_path: str, chunk_size: int = 10000) -> int:
 def get_row_hash(row: pd.Series) -> str:
     """
     Generate an MD5 hash for a given DataFrame row.
-    
-    :param row: A Pandas Series representing a row.
-    :return: A string containing the MD5 hash of the row.
     """
     row_bytes = row.to_json().encode('utf-8')
     return hashlib.md5(row_bytes).hexdigest()
@@ -214,10 +219,6 @@ def filter_processed_csv(processed_file: str, filtered_file: str, chunk_size: in
     Read the processed CSV file in chunks, filter out all columns except
     the specified ones ('negative_review', 'positive_review', 'pos_word_count', 'neg_word_count'),
     and remove duplicate rows globally, keeping only the first occurrence of each duplicate.
-    
-    :param processed_file: Path to the processed CSV file.
-    :param filtered_file: Path to the new CSV file with filtered columns and without duplicates.
-    :param chunk_size: Number of rows to process per chunk.
     """
     columns_to_keep = ['negative_review', 'positive_review', 'pos_word_count', 'neg_word_count']
     seen_hashes = set()
@@ -242,10 +243,6 @@ def count_reviews(file_path: str, chunk_size: int = 10000) -> tuple:
     """
     Read the processed CSV file in chunks and count the number of non-empty
     negative_review and positive_review entries.
-    
-    :param file_path: Path to the processed CSV file.
-    :param chunk_size: Number of rows to process per chunk.
-    :return: A tuple (negative_count, positive_count)
     """
     neg_count = 0
     pos_count = 0
@@ -254,16 +251,32 @@ def count_reviews(file_path: str, chunk_size: int = 10000) -> tuple:
         pos_count += chunk['positive_review'].apply(lambda x: 1 if str(x).strip() != '' else 0).sum()
     return neg_count, pos_count
 
+def convert_reviews_to_lowercase_and_words(file_path: str, chunk_size: int = 10000) -> None:
+    """
+    Read the filtered CSV file in chunks, convert the text in 'negative_review' and 'positive_review'
+    to lowercase and replace numbers with their word representation, then write the result back to the file.
+    """
+    temp_file = file_path + ".tmp"
+    first_chunk = True
+    for chunk in pd.read_csv(file_path, chunksize=chunk_size):
+        if 'negative_review' in chunk.columns:
+            chunk['negative_review'] = chunk['negative_review'].str.lower().apply(replace_numbers_with_words)
+        if 'positive_review' in chunk.columns:
+            chunk['positive_review'] = chunk['positive_review'].str.lower().apply(replace_numbers_with_words)
+        chunk.to_csv(temp_file, index=False, mode='w' if first_chunk else 'a', header=first_chunk)
+        first_chunk = False
+    os.replace(temp_file, file_path)
+
 def main():
     chunk_size = 10000
 
-    # Check if the input file exists; if not, inform the user and exit.
+    # Check if the input file exists
     if not os.path.exists(input_file):
         print(f"Error: The input file '{input_file}' does not exist.")
         print("Please ensure that the file is available before running this script.")
         return
 
-    # Process the raw file to create the processed CSV
+    # Process the raw file into a processed CSV file
     processor = HotelReviewProcessor(input_file, output_file, chunk_size)
     processor.process_file()
     print("Data has been processed and saved to:", output_file)
@@ -271,11 +284,15 @@ def main():
     # Export a summary (5 reviews) to a CSV file with formatted text
     export_summary_csv(output_file, summary_csv, nrows=5)
     
-    # Filter the processed CSV to keep only selected columns and remove duplicate rows
+    # Filter the processed CSV file to keep selected columns and remove duplicates
     filter_processed_csv(output_file, filtered_file, chunk_size)
     print("Filtered data (selected columns and deduplicated) has been saved to:", filtered_file)
 
-    # Count and print null values per column
+    # Convert review texts to lowercase and replace numbers with words in the filtered file
+    convert_reviews_to_lowercase_and_words(filtered_file, chunk_size)
+    print("Review texts have been converted to lowercase and numbers replaced with words in:", filtered_file)
+
+    # Count and print the number of null values per column
     null_counts = count_nulls_per_column(output_file, chunk_size)
     print("Null values per column:")
     for col, count in null_counts.items():
