@@ -3,3 +3,5 @@
 
 sentiment_env/venv_python.3.12/*.csv
 venv_python.3.12/
+requirements.txt
+test_logical_regression_with_features.py
