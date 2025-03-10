@@ -241,7 +241,6 @@ def filter_processed_csv(processed_file: str, filtered_file: str, chunk_size: in
         else:
             chunk_unique.to_csv(filtered_file, index=False, mode='a', header=False)
 
-
 def count_reviews(file_path: str, chunk_size: int = 10000) -> tuple:
     """
     Read the processed CSV file in chunks and count the number of non-empty
@@ -258,12 +257,16 @@ def convert_reviews_to_lowercase_and_words(file_path: str, chunk_size: int = 100
     """
     Read the filtered CSV file in chunks, convert the text in 'negative_review' and 'positive_review'
     to lowercase and replace numbers with their word representation, then write the result back to the file.
+    I tillegg erstattes forekomster av "no negative" (uavhengig av store/små bokstaver) med "NaN".
     """
     temp_file = file_path + ".tmp"
     first_chunk = True
     for chunk in pd.read_csv(file_path, chunksize=chunk_size):
         if 'negative_review' in chunk.columns:
+            # Konverter til små bokstaver og erstatt tall med ord
             chunk['negative_review'] = chunk['negative_review'].str.lower().apply(replace_numbers_with_words)
+            # Erstatt "no negative" med "NaN"
+            chunk['negative_review'] = chunk['negative_review'].apply(lambda x: "NaN" if x.strip().lower() == "no negative" else x)
         if 'positive_review' in chunk.columns:
             chunk['positive_review'] = chunk['positive_review'].str.lower().apply(replace_numbers_with_words)
         chunk.to_csv(temp_file, index=False, mode='w' if first_chunk else 'a', header=first_chunk)
@@ -321,7 +324,8 @@ def main():
     filter_processed_csv(output_file, filtered_file, chunk_size)
     print("Filtered data (selected columns and deduplicated) has been saved to:", filtered_file)
 
-    # Convert review texts to lowercase and replace numbers with words in the filtered file
+    # Convert review texts to lowercase and replace numbers with words in the filtered file.
+    # I tillegg erstattes "no negative" med "NaN" i negative_review-kolonnen.
     convert_reviews_to_lowercase_and_words(filtered_file, chunk_size)
     print("Review texts have been converted to lowercase and numbers replaced with words in:", filtered_file)
 
