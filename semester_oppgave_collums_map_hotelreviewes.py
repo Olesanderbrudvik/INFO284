@@ -2,6 +2,7 @@ import os
 import re
 import pandas as pd
 import hashlib
+import numpy as np
 from num2words import num2words
 
 # Get the directory where the current script is located
@@ -217,10 +218,11 @@ def get_row_hash(row: pd.Series) -> str:
 def filter_processed_csv(processed_file: str, filtered_file: str, chunk_size: int = 10000) -> None:
     """
     Read the processed CSV file in chunks, filter out all columns except
-    the specified ones ('negative_review', 'positive_review', 'pos_word_count', 'neg_word_count'),
-    and remove duplicate rows globally, keeping only the first occurrence of each duplicate.
+    the specified ones ('negative_review', 'positive_review', 'pos_word_count', 'neg_word_count',
+    'avg_score', 'reviewer_score'), and remove duplicate rows globally,
+    keeping only the first occurrence of each duplicate.
     """
-    columns_to_keep = ['negative_review', 'positive_review', 'pos_word_count', 'neg_word_count']
+    columns_to_keep = ['negative_review', 'positive_review', 'pos_word_count', 'neg_word_count', 'avg_score', 'reviewer_score']
     seen_hashes = set()
     first_chunk = True
     
@@ -238,6 +240,7 @@ def filter_processed_csv(processed_file: str, filtered_file: str, chunk_size: in
             first_chunk = False
         else:
             chunk_unique.to_csv(filtered_file, index=False, mode='a', header=False)
+
 
 def count_reviews(file_path: str, chunk_size: int = 10000) -> tuple:
     """
@@ -266,6 +269,36 @@ def convert_reviews_to_lowercase_and_words(file_path: str, chunk_size: int = 100
         chunk.to_csv(temp_file, index=False, mode='w' if first_chunk else 'a', header=first_chunk)
         first_chunk = False
     os.replace(temp_file, file_path)
+
+def calculate_word_count_stats(file_path: str, chunk_size: int = 10000) -> dict:
+    """
+    Calculate maximum, minimum, median, and average (mean) values for the 'pos_word_count' and 'neg_word_count' columns.
+    
+    This function analyzes the distribution of word counts in both positive and negative reviews.
+    Knowing these statistics is necessary to determine the most appropriate normalization method for further processing.
+    """
+    pos_counts = []
+    neg_counts = []
+    
+    for chunk in pd.read_csv(file_path, chunksize=chunk_size):
+        pos_counts.extend(chunk['pos_word_count'].tolist())
+        neg_counts.extend(chunk['neg_word_count'].tolist())
+    
+    stats = {
+        'pos_word_count': {
+            'max': max(pos_counts),
+            'min': min(pos_counts),
+            'median': np.median(pos_counts),
+            'mean': np.mean(pos_counts)
+        },
+        'neg_word_count': {
+            'max': max(neg_counts),
+            'min': min(neg_counts),
+            'median': np.median(neg_counts),
+            'mean': np.mean(neg_counts)
+        }
+    }
+    return stats
 
 def main():
     chunk_size = 10000
@@ -306,6 +339,22 @@ def main():
     neg_count, pos_count = count_reviews(output_file, chunk_size)
     print(f"\nTotal number of negative reviews: {neg_count}")
     print(f"Total number of positive reviews: {pos_count}")
+    
+    # Calculate and print word count statistics for 'pos_word_count' and 'neg_word_count'
+    # We do this calculation to decide what kind of normalization we should use. 
+    # Note: We use the filtered file since it is the final version used for AI model training.
+    stats = calculate_word_count_stats(filtered_file, chunk_size)
+    print("\nWord count statistics for 'pos_word_count':")
+    print(f"Max: {stats['pos_word_count']['max']}")
+    print(f"Min: {stats['pos_word_count']['min']}")
+    print(f"Median: {stats['pos_word_count']['median']}")
+    print(f"Average: {stats['pos_word_count']['mean']}")
+    
+    print("\nWord count statistics for 'neg_word_count':")
+    print(f"Max: {stats['neg_word_count']['max']}")
+    print(f"Min: {stats['neg_word_count']['min']}")
+    print(f"Median: {stats['neg_word_count']['median']}")
+    print(f"Average: {stats['neg_word_count']['mean']}")
 
 if __name__ == '__main__':
     main()
