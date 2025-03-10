@@ -1,4 +1,4 @@
 *.csv
 .DS_Store
 
-sentiment_env/
+sentiment_env/venv_python.3.12/*.csv
