@@ -1,4 +1,8 @@
 *.csv
 .DS_Store
-
-sentiment_env/
+venv/
+vemv*/
+venv_python.3.12/venv/
+sentiment_env/venv_python.3.12/*.csv
+test_logical_regression_with_features.py
+venv_python.3.12/hotel_reviews_filtered.csv
