@@ -1,6 +1,8 @@
 *.csv
 .DS_Store
+<<<<<<< Updated upstream
 venv/
+sentiment_env
 vemv*/
 venv_python.3.12/venv/
 sentiment_env/venv_python.3.12/*.csv
