@@ -4,6 +4,7 @@ import pandas as pd
 import hashlib
 import numpy as np
 from num2words import num2words
+from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 
 # Get the directory where the current script is located
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -32,7 +33,6 @@ def replace_numbers_with_words(text: str) -> str:
     text = re.sub(r'\b(\d+)(st|nd|rd|th)\b', ordinal_repl, text)
     
     # 2. Insert spaces between numbers and letters to separate them.
-    #    This handles cases like "30pm" or "240v" regardless of order.
     text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)
     text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', text)
     
@@ -241,7 +241,6 @@ def filter_processed_csv(processed_file: str, filtered_file: str, chunk_size: in
         else:
             chunk_unique.to_csv(filtered_file, index=False, mode='a', header=False)
 
-
 def count_reviews(file_path: str, chunk_size: int = 10000) -> tuple:
     """
     Read the processed CSV file in chunks and count the number of non-empty
@@ -258,14 +257,70 @@ def convert_reviews_to_lowercase_and_words(file_path: str, chunk_size: int = 100
     """
     Read the filtered CSV file in chunks, convert the text in 'negative_review' and 'positive_review'
     to lowercase and replace numbers with their word representation, then write the result back to the file.
+    I tillegg erstattes forekomster av "no negative" (uavhengig av store/små bokstaver) med NaN.
     """
     temp_file = file_path + ".tmp"
     first_chunk = True
     for chunk in pd.read_csv(file_path, chunksize=chunk_size):
         if 'negative_review' in chunk.columns:
+            # Konverter til små bokstaver og erstatt tall med ord
             chunk['negative_review'] = chunk['negative_review'].str.lower().apply(replace_numbers_with_words)
+            # Erstatt "no negative" med NaN
+            chunk['negative_review'] = chunk['negative_review'].apply(lambda x: np.nan if x.strip().lower() == "no negative" else x)
         if 'positive_review' in chunk.columns:
             chunk['positive_review'] = chunk['positive_review'].str.lower().apply(replace_numbers_with_words)
+        chunk.to_csv(temp_file, index=False, mode='w' if first_chunk else 'a', header=first_chunk)
+        first_chunk = False
+    os.replace(temp_file, file_path)
+
+def remove_stopwords_from_reviews(file_path: str, chunk_size: int = 10000) -> None:
+    """
+    Read the filtered CSV file in chunks and remove stopwords from the 'negative_review' and 'positive_review'
+    columns using a custom stopwords list based on ENGLISH_STOP_WORDS but excluding negation words.
+    """
+    negation_words = {'neither', 'never', 'no', 'nobody', 'none', 'nor', 'not', 'nothing', 'nowhere', 'without'}
+    custom_stopwords = ENGLISH_STOP_WORDS.difference(negation_words)
+    
+    temp_file = file_path + ".tmp"
+    first_chunk = True
+    for chunk in pd.read_csv(file_path, chunksize=chunk_size):
+        for col in ['negative_review', 'positive_review']:
+            if col in chunk.columns:
+                chunk[col] = chunk[col].astype(str).apply(
+                    lambda text: ' '.join(word for word in text.split() if word not in custom_stopwords)
+                )
+        chunk.to_csv(temp_file, index=False, mode='w' if first_chunk else 'a', header=first_chunk)
+        first_chunk = False
+    os.replace(temp_file, file_path)
+
+def combine_negation_in_negative_reviews(file_path: str, chunk_size: int = 10000) -> None:
+    """
+    Read the filtered CSV file in chunks and combine negation words with the following word
+    in the 'negative_review' column. For example, 'not great' becomes 'notgreat'.
+    Denne funksjonen kjøres kun på kolonnen negative_review.
+    """
+    # Bruk samme mengde negasjonsord som tidligere
+    negation_words = {'neither', 'never', 'no', 'nobody', 'none', 'nor', 'not', 'nothing', 'nowhere', 'without'}
+    
+    def combine_negations(text: str) -> str:
+        tokens = text.split()
+        combined_tokens = []
+        i = 0
+        while i < len(tokens):
+            if tokens[i] in negation_words and i + 1 < len(tokens):
+                # Kombiner negasjonsordet med neste token
+                combined_tokens.append(tokens[i] + tokens[i + 1])
+                i += 2
+            else:
+                combined_tokens.append(tokens[i])
+                i += 1
+        return ' '.join(combined_tokens)
+    
+    temp_file = file_path + ".tmp"
+    first_chunk = True
+    for chunk in pd.read_csv(file_path, chunksize=chunk_size):
+        if 'negative_review' in chunk.columns:
+            chunk['negative_review'] = chunk['negative_review'].astype(str).apply(combine_negations)
         chunk.to_csv(temp_file, index=False, mode='w' if first_chunk else 'a', header=first_chunk)
         first_chunk = False
     os.replace(temp_file, file_path)
@@ -273,9 +328,6 @@ def convert_reviews_to_lowercase_and_words(file_path: str, chunk_size: int = 100
 def calculate_word_count_stats(file_path: str, chunk_size: int = 10000) -> dict:
     """
     Calculate maximum, minimum, median, and average (mean) values for the 'pos_word_count' and 'neg_word_count' columns.
-    
-    This function analyzes the distribution of word counts in both positive and negative reviews.
-    Knowing these statistics is necessary to determine the most appropriate normalization method for further processing.
     """
     pos_counts = []
     neg_counts = []
@@ -321,9 +373,17 @@ def main():
     filter_processed_csv(output_file, filtered_file, chunk_size)
     print("Filtered data (selected columns and deduplicated) has been saved to:", filtered_file)
 
-    # Convert review texts to lowercase and replace numbers with words in the filtered file
+    # Convert review texts to lowercase, replace numbers with words, and handle "no negative"
     convert_reviews_to_lowercase_and_words(filtered_file, chunk_size)
     print("Review texts have been converted to lowercase and numbers replaced with words in:", filtered_file)
+
+    # Fjern stopwords fra reviewene, men bevar negasjonsordene
+    remove_stopwords_from_reviews(filtered_file, chunk_size)
+    print("Stopwords (unntatt negasjoner) er fjernet fra review-tekstene i:", filtered_file)
+
+    # Kombiner negasjon i kolonnen negative_review (f.eks. "not great" -> "notgreat")
+    combine_negation_in_negative_reviews(filtered_file, chunk_size)
+    print("Negasjon i negative_review er kombinert i filen:", filtered_file)
 
     # Count and print the number of null values per column
     null_counts = count_nulls_per_column(output_file, chunk_size)
@@ -341,8 +401,6 @@ def main():
     print(f"Total number of positive reviews: {pos_count}")
     
     # Calculate and print word count statistics for 'pos_word_count' and 'neg_word_count'
-    # We do this calculation to decide what kind of normalization we should use. 
-    # Note: We use the filtered file since it is the final version used for AI model training.
     stats = calculate_word_count_stats(filtered_file, chunk_size)
     print("\nWord count statistics for 'pos_word_count':")
     print(f"Max: {stats['pos_word_count']['max']}")

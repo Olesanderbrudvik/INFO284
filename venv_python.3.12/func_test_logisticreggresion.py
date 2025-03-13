@@ -42,16 +42,40 @@ class SentimentAnalyzer:
         stems = [self.stemmer.stem(token) for token in tokens if token.isalpha()]
         return stems
 
-    def assign_sentiment(self, row: pd.Series) -> int:
+    def assign_sentiment(self, row: pd.Series, neg_weight: float = 1.5, threshold: float = 0.05) -> int:
         """
-        Assigns a sentiment label using VADER's compound score for the combined review text.
-        Uses a zero threshold:
-            compound >= 0 -> positive (1)
-            compound < 0  -> negative (0)
+        Assigns sentiment based on a weighted combination of VADER scores from the positive and negative reviews.
+    
+        The positive and negative texts are processed separately:
+        - pos_score: VADER compound score for positive_review.
+        - neg_score: VADER compound score for negative_review.
+    
+        The negative score is multiplied by neg_weight to emphasize its impact.
+        If the combined score (final_score) is greater than or equal to the threshold,
+        the review is classified as positive (1); otherwise, it is classified as negative (0).
+
+        :param neg_weight: Weight for the negative review component (default is 1.5).
+        :param threshold: Threshold for classifying a review as positive (default is 0.05).
         """
-        text = f"{row['positive_review']} {row['negative_review']}"
-        score = self.sia.polarity_scores(text)['compound']
-        return 1 if score >= 0 else 0
+        pos_text = row['positive_review']
+        neg_text = row['negative_review']
+    
+        # Ensure pos_text is a string; if not, or if it is NaN, set it to an empty string.
+        if pd.isna(pos_text) or not isinstance(pos_text, str):
+            pos_text = ""
+        
+        # Ensure neg_text is a string; if not, or if it is NaN, set it to an empty string.
+        if pd.isna(neg_text) or not isinstance(neg_text, str):
+            neg_text = ""
+    
+        pos_score = self.sia.polarity_scores(pos_text)['compound'] if pos_text.strip() != "" else 0.0
+        neg_score = self.sia.polarity_scores(neg_text)['compound'] if neg_text.strip() != "" else 0.0
+    
+        final_score = pos_score + (neg_weight * neg_score)
+    
+        return 1 if final_score >= threshold else 0
+
+
 
     def build_pipeline(self) -> Pipeline:
         """
@@ -92,7 +116,7 @@ class SentimentAnalyzer:
             'tfidf__ngram_range': [(1, 2), (1, 3)],
             'clf__C': [0.1, 1.0]
         }
-        grid = GridSearchCV(self.pipeline, param_grid, cv=5, n_jobs=-1, verbose=1)
+        grid = GridSearchCV(self.pipeline, param_grid, cv=3, n_jobs=-2, verbose=1)
         grid.fit(X_train, y_train)
         self.pipeline = grid.best_estimator_
         return grid.best_params_
@@ -186,7 +210,7 @@ def main() -> None:
     df['review_text'] = df['positive_review'].fillna('') + " " + df['negative_review'].fillna('')
 
     # Initialize the SentimentAnalyzer (set grid search flag as desired).
-    use_grid_search = False  # Set to True to perform grid search; False to skip it.
+    use_grid_search = True  # Set to True to perform grid search; False to skip it.
     analyzer = SentimentAnalyzer(use_grid_search=use_grid_search)
 
     # Apply VADER-based sentiment labeling.
