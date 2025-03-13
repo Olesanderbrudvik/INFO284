@@ -352,6 +352,90 @@ def calculate_word_count_stats(file_path: str, chunk_size: int = 10000) -> dict:
     }
     return stats
 
+def final_filtered_summary(file_path: str, chunk_size: int = 10000) -> None:
+    """
+    Gir en oversikt over antall rader, antall ikke-tomme positive/negative tilbakemeldinger,
+    samt min, maks, median og gjennomsnitt for ordtellingskolonnene og eventuelle skår-kolonner.
+    """
+    total_rows = 0
+    pos_nonempty_count = 0
+    neg_nonempty_count = 0
+
+    pos_word_counts = []
+    neg_word_counts = []
+    
+    avg_score_values = []
+    reviewer_score_values = []
+
+    # Leser den filtrerte filen i chunks
+    for chunk in pd.read_csv(file_path, chunksize=chunk_size):
+        total_rows += len(chunk)
+
+        # Teller ikke-tomme tilbakemeldinger (dvs. strenger som ikke er '' eller bare whitespace)
+        pos_nonempty_count += chunk['positive_review'].apply(
+            lambda x: 1 if isinstance(x, str) and x.strip() else 0
+        ).sum()
+        neg_nonempty_count += chunk['negative_review'].apply(
+            lambda x: 1 if isinstance(x, str) and x.strip() else 0
+        ).sum()
+
+        # Samler ordtellerverdier (hvis de finnes og ikke er NaN)
+        if 'pos_word_count' in chunk.columns:
+            pos_word_counts.extend(chunk['pos_word_count'].dropna().tolist())
+        if 'neg_word_count' in chunk.columns:
+            neg_word_counts.extend(chunk['neg_word_count'].dropna().tolist())
+
+        # Samler score-verdier (hvis de finnes)
+        if 'avg_score' in chunk.columns:
+            avg_score_values.extend(chunk['avg_score'].dropna().tolist())
+        if 'reviewer_score' in chunk.columns:
+            reviewer_score_values.extend(chunk['reviewer_score'].dropna().tolist())
+
+    # Utskrift av resultater
+    print(f"FIL: {file_path}")
+    print(f"Totalt antall rader: {total_rows}")
+    print(f"Ikke-tomme positive tilbakemeldinger: {pos_nonempty_count}")
+    print(f"Ikke-tomme negative tilbakemeldinger: {neg_nonempty_count}")
+
+    # Ordtelling for positive
+    if len(pos_word_counts) > 0:
+        print("\nOrdtelling (pos_word_count):")
+        print(f"  Maks:    {max(pos_word_counts)}")
+        print(f"  Min:     {min(pos_word_counts)}")
+        print(f"  Median:  {np.median(pos_word_counts)}")
+        print(f"  Gj.sn.:  {np.mean(pos_word_counts)}")
+    else:
+        print("\nIngen 'pos_word_count'-data funnet.")
+
+    # Ordtelling for negative
+    if len(neg_word_counts) > 0:
+        print("\nOrdtelling (neg_word_count):")
+        print(f"  Maks:    {max(neg_word_counts)}")
+        print(f"  Min:     {min(neg_word_counts)}")
+        print(f"  Median:  {np.median(neg_word_counts)}")
+        print(f"  Gj.sn.:  {np.mean(neg_word_counts)}")
+    else:
+        print("\nIngen 'neg_word_count'-data funnet.")
+
+    # Stats for avg_score
+    if len(avg_score_values) > 0:
+        print("\nStatistikk for 'avg_score':")
+        print(f"  Maks:    {max(avg_score_values)}")
+        print(f"  Min:     {min(avg_score_values)}")
+        print(f"  Median:  {np.median(avg_score_values)}")
+        print(f"  Gj.sn.:  {np.mean(avg_score_values)}")
+
+    # Stats for reviewer_score
+    if len(reviewer_score_values) > 0:
+        print("\nStatistikk for 'reviewer_score':")
+        print(f"  Maks:    {max(reviewer_score_values)}")
+        print(f"  Min:     {min(reviewer_score_values)}")
+        print(f"  Median:  {np.median(reviewer_score_values)}")
+        print(f"  Gj.sn.:  {np.mean(reviewer_score_values)}")
+
+    print("\n--- Slutt på oppsummering ---")
+
+
 def main():
     chunk_size = 10000
 
@@ -413,6 +497,7 @@ def main():
     print(f"Min: {stats['neg_word_count']['min']}")
     print(f"Median: {stats['neg_word_count']['median']}")
     print(f"Average: {stats['neg_word_count']['mean']}")
+    final_filtered_summary(filtered_file, chunk_size=10000)
 
 if __name__ == '__main__':
     main()

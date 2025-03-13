@@ -9,7 +9,7 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from nltk.tokenize import word_tokenize
 from nltk.stem import SnowballStemmer
 from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, confusion_matrix
@@ -43,26 +43,12 @@ class SentimentAnalyzer:
     def assign_sentiment(self, row: pd.Series, neg_weight: float = 1.5, threshold: float = 0.05) -> int:
         """
         Assigns sentiment based on a weighted combination of VADER scores from the positive and negative reviews.
-    
-        The positive and negative texts are processed separately:
-        - pos_score: VADER compound score for positive_review.
-        - neg_score: VADER compound score for negative_review.
-    
-        The negative score is multiplied by neg_weight to emphasize its impact.
-        If the combined score (final_score) is greater than or equal to the threshold,
-        the review is classified as positive (1); otherwise, it is classified as negative (0).
-
-        :param neg_weight: Weight for the negative review component (default is 1.5).
-        :param threshold: Threshold for classifying a review as positive (default is 0.05).
         """
         pos_text = row['positive_review']
         neg_text = row['negative_review']
     
-        # Ensure pos_text is a string; if not, or if it is NaN, set it to an empty string.
         if pd.isna(pos_text) or not isinstance(pos_text, str):
             pos_text = ""
-        
-        # Ensure neg_text is a string; if not, or if it is NaN, set it to an empty string.
         if pd.isna(neg_text) or not isinstance(neg_text, str):
             neg_text = ""
     
@@ -73,13 +59,9 @@ class SentimentAnalyzer:
     
         return 1 if final_score >= threshold else 0
 
-
-
     def build_pipeline(self) -> Pipeline:
         """
-        Builds and returns the text classification pipeline.
-        Uses a custom tokenizer and a custom stop words list (lowercased and stemmed).
-        Class_weight is adjusted given the unbalance between pos and neg (n_pos/n_neg = class_weight)
+        Builds and returns the text classification pipeline with a RandomForestClassifier.
         """
         custom_stop_words = list({self.stemmer.stem(word) for word in ENGLISH_STOP_WORDS if word.isalpha()})
         
@@ -89,13 +71,15 @@ class SentimentAnalyzer:
             ngram_range=(1, 3),
             min_df=3
         )
-        clf = LogisticRegression(
-            max_iter=1000,
-            solver='saga',
-            C=1.0,
-            class_weight={0: 3.6, 1: 1.0},
-            random_state=42
+        # ---- Her bytter vi ut LogisticRegression med RandomForestClassifier ----
+        clf = RandomForestClassifier(
+            n_estimators=50,              # Antall trær
+            max_depth=None,                # Ingen maks dybde
+            class_weight={0: 3.6, 1: 1.0}, # Tilpasset vekting
+            random_state=42,
+            n_jobs=-1                      # Bruk alle prosessorkjerner
         )
+        
         self.pipeline = Pipeline([
             ('tfidf', tfidf),
             ('clf', clf)
@@ -104,18 +88,20 @@ class SentimentAnalyzer:
 
     def run_grid_search(self, X_train: list[str], y_train: list[int]) -> dict:
         """
-        Runs grid search to optimize hyperparameters on a smaller grid.
+        Runs grid search to optimize hyperparameters on a smaller grid for RandomForest.
         Returns the best parameters.
         """
         if self.pipeline is None:
             self.build_pipeline()
         assert self.pipeline is not None, "Pipeline must be built before running grid search."
 
+        # Eksempel på param_grid for RandomForest
         param_grid = {
             'tfidf__ngram_range': [(1, 2), (1, 3)],
-            'clf__C': [0.1, 1.0]
+            'clf__n_estimators': [50, 100],
+            'clf__max_depth': [None, 10],
         }
-        grid = GridSearchCV(self.pipeline, param_grid, cv=3, n_jobs=-2, verbose=1)
+        grid = GridSearchCV(self.pipeline, param_grid, cv=3, n_jobs=-1, verbose=1)
         grid.fit(X_train, y_train)
         self.pipeline = grid.best_estimator_
         return grid.best_params_
@@ -151,33 +137,29 @@ class SentimentAnalyzer:
 
     def plot_influential_words(self, top_n: int = 20) -> None:
         """
-        Plots the top positive and negative words based on the classifier's coefficients.
+        For RandomForest, we can plot top words by feature importance.
+        (Feature importances are less direct than logistic coefficients, 
+        but we can still show the most important features.)
         """
         assert self.pipeline is not None, "Pipeline must be built and fitted to plot influential words."
         vectorizer: TfidfVectorizer = self.pipeline.named_steps['tfidf']
-        classifier: LogisticRegression = self.pipeline.named_steps['clf']
+        
+        # Her henter vi ut random forest
+        classifier: RandomForestClassifier = self.pipeline.named_steps['clf']
+        
+        # 'feature_importances_' gir oss en vekt for hver feature
+        importances = classifier.feature_importances_
         feature_names = vectorizer.get_feature_names_out()
-        coefficients = classifier.coef_[0]
-
-        top_positive_indices = np.argsort(coefficients)[-top_n:][::-1]
-        top_negative_indices = np.argsort(coefficients)[:top_n]
-
-        top_positive_words = feature_names[top_positive_indices]
-        top_positive_values = coefficients[top_positive_indices]
-        top_negative_words = feature_names[top_negative_indices]
-        top_negative_values = coefficients[top_negative_indices]
+        
+        # Finn de top N viktigste feature-idx
+        indices = np.argsort(importances)[-top_n:]
+        top_features = feature_names[indices]
+        top_values = importances[indices]
 
         plt.figure(figsize=(10, 6))
-        plt.barh(top_positive_words, top_positive_values, color='green')
-        plt.xlabel('Coefficient Value')
-        plt.title('Top Positive Words (Improved)')
-        plt.gca().invert_yaxis()
-        plt.show()
-
-        plt.figure(figsize=(10, 6))
-        plt.barh(top_negative_words, top_negative_values, color='red')
-        plt.xlabel('Coefficient Value')
-        plt.title('Top Negative Words (Improved)')
+        plt.barh(top_features, top_values, color='green')
+        plt.xlabel('Feature Importance')
+        plt.title('Top Features by Importance (RandomForest)')
         plt.gca().invert_yaxis()
         plt.show()
 
@@ -198,7 +180,6 @@ class SentimentAnalyzer:
         plt.ylabel("True Label")
         plt.title("Confusion Matrix")
         plt.show()
-
 
 def main() -> None:
     # Load the processed data file.
@@ -228,7 +209,7 @@ def main() -> None:
     # Split data into training and test sets.
     X_train, X_test, y_train, y_test = train_test_split(X_list, y_list, test_size=0.2, random_state=42)
 
-    # Build and train the pipeline.
+    # Build and train the pipeline (now with RandomForest).
     analyzer.build_pipeline()
     analyzer.fit(X_train, y_train)
 
@@ -238,9 +219,8 @@ def main() -> None:
     # Plot the confusion matrix.
     analyzer.plot_confusion_matrix(X_test, y_test)
 
-    # Plot the most influential words.
+    # Plot the most "important" words (feature importances).
     analyzer.plot_influential_words()
-
 
 if __name__ == '__main__':
     main()
