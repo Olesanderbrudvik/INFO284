@@ -161,8 +161,7 @@ class SentimentAnalyzer:
     def plot_confusion_matrix(self, X_test: list[str], y_test: list[int]) -> None:
         """
         Computes and plots the confusion matrix for the test set.
-        """
-        from sklearn.metrics import confusion_matrix
+        """ 
         
         y_pred = self.predict(X_test)
         cm = confusion_matrix(y_test, y_pred)

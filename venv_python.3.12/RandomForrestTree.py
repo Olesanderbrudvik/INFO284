@@ -71,13 +71,13 @@ class SentimentAnalyzer:
             ngram_range=(1, 3),
             min_df=3
         )
-        # ---- Her bytter vi ut LogisticRegression med RandomForestClassifier ----
+        # ---- RandomForrestClassifier Model ----
         clf = RandomForestClassifier(
-            n_estimators=50,              # Antall trær
-            max_depth=None,                # Ingen maks dybde
-            class_weight={0: 3.6, 1: 1.0}, # Tilpasset vekting
+            n_estimators=50,              # Numbers of trees 
+            max_depth=None,                # No max depth 
+            class_weight={0: 3.6, 1: 1.0}, # Adjusted weights given the dif of each class 
             random_state=42,
-            n_jobs=-1                      # Bruk alle prosessorkjerner
+            n_jobs=-1                      # Using all processing cores, rutime will decrease but the machine will be more usable 
         )
         
         self.pipeline = Pipeline([
@@ -95,7 +95,7 @@ class SentimentAnalyzer:
             self.build_pipeline()
         assert self.pipeline is not None, "Pipeline must be built before running grid search."
 
-        # Eksempel på param_grid for RandomForest
+        # Example of parm_grid, be avere of the computational time. 
         param_grid = {
             'tfidf__ngram_range': [(1, 2), (1, 3)],
             'clf__n_estimators': [50, 100],
@@ -167,7 +167,7 @@ class SentimentAnalyzer:
         """
         Computes and plots the confusion matrix for the test set.
         """
-        from sklearn.metrics import confusion_matrix
+
         
         y_pred = self.predict(X_test)
         cm = confusion_matrix(y_test, y_pred)

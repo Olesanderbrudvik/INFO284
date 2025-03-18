@@ -9,21 +9,21 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from nltk.tokenize import word_tokenize
 from nltk.stem import SnowballStemmer
 from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
-from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, confusion_matrix
 from typing import Optional, Any, cast
 
-# Ensure necessary NLTK resources are available
+# Sørg for at nødvendige NLTK-ressurser er tilgjengelige
 nltk.download('vader_lexicon')
 nltk.download('punkt')
 
-class SentimentAnalyzer:
+class SentimentAnalyzerNB:
     def __init__(self, use_grid_search: bool = False) -> None:
         """
-        Initializes the SentimentAnalyzer.
-        :param use_grid_search: If True, perform grid search during training.
+        Initialiserer SentimentAnalyzerNB.
+        :param use_grid_search: Hvis True, kjøres grid search under treningen.
         """
         self.use_grid_search: bool = use_grid_search
         self.sia: SentimentIntensityAnalyzer = SentimentIntensityAnalyzer()
@@ -32,7 +32,7 @@ class SentimentAnalyzer:
 
     def custom_tokenizer(self, text: str) -> list[str]:
         """
-        Tokenizes text by lowercasing, removing punctuation, tokenizing, and stemming.
+        Tokeniserer tekst ved å gjøre alt små bokstaver, fjerne tegnsetting, tokenisere og stemme.
         """
         text = text.lower()
         text = text.translate(str.maketrans('', '', string.punctuation))
@@ -42,7 +42,7 @@ class SentimentAnalyzer:
 
     def assign_sentiment(self, row: pd.Series, neg_weight: float = 1.0, threshold: float = 0.05) -> int:
         """
-        Assigns sentiment based on a weighted combination of VADER scores from the positive and negative reviews.
+        Tildeler sentiment basert på en vektet kombinasjon av VADER-skårer for positive og negative anmeldelser.
         """
         pos_text = row['positive_review']
         neg_text = row['negative_review']
@@ -61,69 +61,75 @@ class SentimentAnalyzer:
 
     def build_pipeline(self) -> Pipeline:
         """
-        Builds and returns the text classification pipeline.
+        Bygger og returnerer tekstklassifiserings-pipelinen.
         """
+    # Lag et tilpasset stoppordsett basert på stemte versjoner av ENGLISH_STOP_WORDS
         custom_stop_words = list({self.stemmer.stem(word) for word in ENGLISH_STOP_WORDS if word.isalpha()})
-        
+    
         tfidf = TfidfVectorizer(
             stop_words=custom_stop_words,
             tokenizer=self.custom_tokenizer,
             ngram_range=(1, 3),
             min_df=3
         )
-        clf = LogisticRegression(
-            max_iter=1000,
-            solver='saga',
-            C=1.0,
-            class_weight={0: 3.6, 1: 1.0},
-            random_state=42
-        )
+    
+        # Basert på telleverdiene:
+        #   Negative (klasse 0): 94068
+        #   Positive (klasse 1): 417031
+        # Beregning:
+        #   ratio = 417031 / 94068 ≈ 4.434
+        #   p_neg = 4.434 / (4.434 + 1) ≈ 0.8158
+        #   p_pos = 1 / (4.434 + 1) ≈ 0.1842
+        # Setter de manuelle priorene for MultinomialNB
+        clf = MultinomialNB(alpha=5.0, fit_prior=True, class_prior=[0.8158, 0.1842])
+    
         self.pipeline = Pipeline([
             ('tfidf', tfidf),
             ('clf', clf)
         ])
         return self.pipeline
 
+
     def run_grid_search(self, X_train: list[str], y_train: list[int]) -> dict:
         """
-        Runs grid search to optimize hyperparameters on a smaller grid.
+        Kjører grid search for å optimalisere hyperparametere.
         """
         if self.pipeline is None:
             self.build_pipeline()
-        assert self.pipeline is not None, "Pipeline must be built before running grid search."
+        assert self.pipeline is not None, "Pipelinen må bygges før grid search kjøres."
 
         param_grid = {
             'tfidf__ngram_range': [(1, 2), (1, 3)],
-            'clf__C': [0.1, 1.0]
+            'clf__alpha': [0.1, 1.0, 5.0]
         }
-        grid = GridSearchCV(self.pipeline, param_grid, cv=3, n_jobs=-2, verbose=1)
+        grid = GridSearchCV(self.pipeline, param_grid, cv=3, n_jobs=-1, verbose=1)
         grid.fit(X_train, y_train)
         self.pipeline = grid.best_estimator_
         return grid.best_params_
 
     def fit(self, X_train: list[str], y_train: list[int]) -> None:
         """
-        Trains the model; if use_grid_search is True, runs grid search.
+        Trener modellen; hvis use_grid_search er True, kjøres grid search.
         """
         if self.pipeline is None:
             self.build_pipeline()
         if self.use_grid_search:
             best_params = self.run_grid_search(X_train, y_train)
-            print("Best parameters from grid search:", best_params)
+            print("Beste parametre fra grid search:", best_params)
         else:
-            assert self.pipeline is not None, "Pipeline must be built before fitting."
+            assert self.pipeline is not None, "Pipelinen må bygges før fitting."
             self.pipeline.fit(X_train, y_train)
 
     def predict(self, X_test: list[str]) -> np.ndarray:
         """
-        Predicts labels for the provided test set.
+        Predikerer etiketter for gitt testsett.
         """
-        assert self.pipeline is not None, "Pipeline is not built or fitted."
+        assert self.pipeline is not None, "Pipelinen er ikke bygget eller trent."
         return cast(np.ndarray, self.pipeline.predict(X_test))
 
     def evaluate(self, X_test: list[str], y_test: list[int]) -> str:
         """
-        Evaluates the model and prints a classification report for testsettet.
+        Evaluerer modellen og skriver ut en klassifiseringsrapport for testsettet.
         """
         y_pred = self.predict(X_test)
         report: str = cast(str, classification_report(y_test, y_pred, output_dict=False))
@@ -161,39 +167,46 @@ class SentimentAnalyzer:
 
     def plot_influential_words(self, top_n: int = 20) -> None:
         """
-        Plots the top positive and negative words based on the classifier's coefficients.
+        Plotter de topp positive og negative ordene basert på klassifisererens koeffisienter.
+        Merk: For MultinomialNB kan koeffisenter tolkes noe annerledes enn for logistisk regresjon.
         """
-        assert self.pipeline is not None, "Pipeline must be built and fitted to plot influential words."
-        vectorizer: TfidfVectorizer = self.pipeline.named_steps['tfidf']
-        classifier: LogisticRegression = self.pipeline.named_steps['clf']
+        assert self.pipeline is not None, "Pipelinen må bygges og trenes for å plotte påvirkende ord."
+        vectorizer = self.pipeline.named_steps['tfidf']
+        # MultinomialNB har ikke koeffisienter på samme måte, men vi kan se på log-sannsynligheter:
+        clf: MultinomialNB = self.pipeline.named_steps['clf']
+        if not hasattr(clf, "feature_log_prob_"):
+            print("Modellen har ikke attributtet 'feature_log_prob_'.")
+            return
+        
         feature_names = vectorizer.get_feature_names_out()
-        coefficients = classifier.coef_[0]
-
-        top_positive_indices = np.argsort(coefficients)[-top_n:][::-1]
-        top_negative_indices = np.argsort(coefficients)[:top_n]
+        # Differansen mellom log-sannsynligheter for de to klassene:
+        coef_diff = clf.feature_log_prob_[1] - clf.feature_log_prob_[0]
+        
+        top_positive_indices = np.argsort(coef_diff)[-top_n:][::-1]
+        top_negative_indices = np.argsort(coef_diff)[:top_n]
 
         top_positive_words = feature_names[top_positive_indices]
-        top_positive_values = coefficients[top_positive_indices]
+        top_positive_values = coef_diff[top_positive_indices]
         top_negative_words = feature_names[top_negative_indices]
-        top_negative_values = coefficients[top_negative_indices]
+        top_negative_values = coef_diff[top_negative_indices]
 
         plt.figure(figsize=(10, 6))
-        plt.barh(top_positive_words, top_positive_values, color='green')
-        plt.xlabel('Coefficient Value')
-        plt.title('Top Positive Words (Improved)')
+        plt.barh(top_positive_words, top_positive_values)
+        plt.xlabel('Log sannsynlighetsdifferanse')
+        plt.title('Topp positive ord')
         plt.gca().invert_yaxis()
         plt.show()
 
         plt.figure(figsize=(10, 6))
-        plt.barh(top_negative_words, top_negative_values, color='red')
-        plt.xlabel('Coefficient Value')
-        plt.title('Top Negative Words (Improved)')
+        plt.barh(top_negative_words, top_negative_values)
+        plt.xlabel('Log sannsynlighetsdifferanse')
+        plt.title('Topp negative ord')
         plt.gca().invert_yaxis()
         plt.show()
 
     def plot_confusion_matrix(self, X_test: list[str], y_test: list[int]) -> None:
         """
-        Computes and plots the confusion matrix for the test set.
+        Beregner og plotter forvirringsmatrisen for testsettet.
         """
         y_pred = self.predict(X_test)
         cm = confusion_matrix(y_test, y_pred)
@@ -208,47 +221,47 @@ class SentimentAnalyzer:
         plt.show()
 
 def main() -> None:
-    # Load the processed data file.
+    # Last inn data
     data_file = "hotel_reviews_filtered.csv"
     df = pd.read_csv(data_file)
 
-    # Create combined review text if not already present.
+    # Kombiner tekst fra positive og negative anmeldelser
     df['review_text'] = df['positive_review'].fillna('') + " " + df['negative_review'].fillna('')
 
-    # Initialize the SentimentAnalyzer (set grid search flag as desired).
+    # Initialiser SentimentAnalyzerNB (sett grid search-flagget etter ønske)
     use_grid_search = False  # Sett til True for å kjøre grid search
-    analyzer = SentimentAnalyzer(use_grid_search=use_grid_search)
+    analyzer = SentimentAnalyzerNB(use_grid_search=use_grid_search)
 
-    # Apply VADER-based sentiment labeling.
+    # Bruk VADER-basert sentiment tildeling
     df['sentiment'] = df.apply(analyzer.assign_sentiment, axis=1)
-    print("Sentiment distribution:")
+    print("Sentiment distribusjon:")
     print(df['sentiment'].value_counts())
 
-    # Use only the combined review text for the model.
+    # Bruk kun kombinert review tekst for modellen
     X = df['review_text']
     y = df['sentiment']
 
-    # Convert the Series to lists.
+    # Konverter Series til lister
     X_list: list[str] = X.tolist()
     y_list: list[int] = y.tolist()
 
-    # Split data into training and test sets.
+    # Splitt data i trenings- og testsett
     X_train, X_test, y_train, y_test = train_test_split(X_list, y_list, test_size=0.2, random_state=42)
 
-    # Build and train the pipeline.
+    # Bygg og tren pipelinen
     analyzer.build_pipeline()
     analyzer.fit(X_train, y_train)
 
-    # Evaluate the model on test data.
+    # Evaluer modellen på testdata
     analyzer.evaluate(X_test, y_test)
     
-    # Evaluer overfitting ved å sammenligne trenings- og testytelse.
+    # Evaluer overfitting ved å sammenligne trenings- og testytelse
     analyzer.evaluate_overfitting(X_train, y_train, X_test, y_test)
 
-    # Plot the confusion matrix.
+    # Plot forvirringsmatrisen
     analyzer.plot_confusion_matrix(X_test, y_test)
 
-    # Plot the most influential words.
+    # Plot de mest påvirkende ordene
     analyzer.plot_influential_words()
 
 if __name__ == '__main__':

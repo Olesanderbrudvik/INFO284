@@ -297,9 +297,9 @@ def combine_negation_in_negative_reviews(file_path: str, chunk_size: int = 10000
     """
     Read the filtered CSV file in chunks and combine negation words with the following word
     in the 'negative_review' column. For example, 'not great' becomes 'notgreat'.
-    Denne funksjonen kjøres kun på kolonnen negative_review.
+    This function will only be applied to the negative_review column.
     """
-    # Bruk samme mengde negasjonsord som tidligere
+    
     negation_words = {'neither', 'never', 'no', 'nobody', 'none', 'nor', 'not', 'nothing', 'nowhere', 'without'}
     
     def combine_negations(text: str) -> str:
@@ -308,7 +308,7 @@ def combine_negation_in_negative_reviews(file_path: str, chunk_size: int = 10000
         i = 0
         while i < len(tokens):
             if tokens[i] in negation_words and i + 1 < len(tokens):
-                # Kombiner negasjonsordet med neste token
+                # Combines negational word with next token.
                 combined_tokens.append(tokens[i] + tokens[i + 1])
                 i += 2
             else:
@@ -354,6 +354,8 @@ def calculate_word_count_stats(file_path: str, chunk_size: int = 10000) -> dict:
 
 def final_filtered_summary(file_path: str, chunk_size: int = 10000) -> None:
     """
+    Gives an overview over numbers of rows and num of not empti positive/negative reviews,
+    Also 
     Gir en oversikt over antall rader, antall ikke-tomme positive/negative tilbakemeldinger,
     samt min, maks, median og gjennomsnitt for ordtellingskolonnene og eventuelle skår-kolonner.
     """
