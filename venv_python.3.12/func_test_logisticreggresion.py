@@ -75,7 +75,7 @@ class SentimentAnalyzer:
             max_iter=1000,
             solver='saga',
             C=1.0,
-            class_weight={0: 3.6, 1: 1.0},
+            class_weight={0: 4.433, 1: 1.0},
             random_state=42
         )
         self.pipeline = Pipeline([

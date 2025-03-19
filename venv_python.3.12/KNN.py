@@ -1,3 +1,5 @@
+import os
+import re
 import string
 import pandas as pd
 import nltk
@@ -9,7 +11,7 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from nltk.tokenize import word_tokenize
 from nltk.stem import SnowballStemmer
 from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, confusion_matrix
@@ -40,28 +42,21 @@ class SentimentAnalyzer:
         stems = [self.stemmer.stem(token) for token in tokens if token.isalpha()]
         return stems
 
-    def assign_sentiment(self, row: pd.Series, neg_weight: float = 1.5, threshold: float = 0.05) -> int:
+    def assign_sentiment(self, row: pd.Series) -> int:
         """
-        Assigns sentiment based on a weighted combination of VADER scores from the positive and negative reviews.
+        Assigns a sentiment label using VADER's compound score for the combined review text.
+        Uses a zero threshold:
+            compound >= 0 -> positive (1)
+            compound < 0  -> negative (0)
         """
-        pos_text = row['positive_review']
-        neg_text = row['negative_review']
-    
-        if pd.isna(pos_text) or not isinstance(pos_text, str):
-            pos_text = ""
-        if pd.isna(neg_text) or not isinstance(neg_text, str):
-            neg_text = ""
-    
-        pos_score = self.sia.polarity_scores(pos_text)['compound'] if pos_text.strip() != "" else 0.0
-        neg_score = self.sia.polarity_scores(neg_text)['compound'] if neg_text.strip() != "" else 0.0
-    
-        final_score = pos_score + (neg_weight * neg_score)
-    
-        return 1 if final_score >= threshold else 0
+        text = f"{row['positive_review']} {row['negative_review']}"
+        score = self.sia.polarity_scores(text)['compound']
+        return 1 if score >= 0 else 0
 
     def build_pipeline(self) -> Pipeline:
         """
-        Builds and returns the text classification pipeline with a RandomForestClassifier.
+        Builds and returns the text classification pipeline.
+        Uses a custom tokenizer and a custom stop words list (lowercased and stemmed).
         """
         custom_stop_words = list({self.stemmer.stem(word) for word in ENGLISH_STOP_WORDS if word.isalpha()})
         
@@ -71,15 +66,7 @@ class SentimentAnalyzer:
             ngram_range=(1, 3),
             min_df=3
         )
-        # ---- RandomForrestClassifier Model ----
-        clf = RandomForestClassifier(
-            n_estimators=50,              # Numbers of trees 
-            max_depth=None,                # No max depth 
-            class_weight={0: 3.609, 1: 1.0}, # Adjusted weights given the dif of each class 
-            random_state=42,
-            n_jobs=-1                      # Using all processing cores, rutime will decrease but the machine will be more usable 
-        )
-        
+        clf = KNeighborsClassifier(n_neighbors=5)
         self.pipeline = Pipeline([
             ('tfidf', tfidf),
             ('clf', clf)
@@ -88,20 +75,18 @@ class SentimentAnalyzer:
 
     def run_grid_search(self, X_train: list[str], y_train: list[int]) -> dict:
         """
-        Runs grid search to optimize hyperparameters on a smaller grid for RandomForest.
+        Runs grid search to optimize hyperparameters on a smaller grid.
         Returns the best parameters.
         """
         if self.pipeline is None:
             self.build_pipeline()
         assert self.pipeline is not None, "Pipeline must be built before running grid search."
 
-        # Example of parm_grid, be avere of the computational time. 
         param_grid = {
             'tfidf__ngram_range': [(1, 2), (1, 3)],
-            'clf__n_estimators': [50, 100],
-            'clf__max_depth': [None, 10],
+            'clf__n_neighbors': [3, 5, 7]
         }
-        grid = GridSearchCV(self.pipeline, param_grid, cv=3, n_jobs=-1, verbose=1)
+        grid = GridSearchCV(self.pipeline, param_grid, cv=5, n_jobs=-1, verbose=1)
         grid.fit(X_train, y_train)
         self.pipeline = grid.best_estimator_
         return grid.best_params_
@@ -137,38 +122,16 @@ class SentimentAnalyzer:
 
     def plot_influential_words(self, top_n: int = 20) -> None:
         """
-        For RandomForest, we can plot top words by feature importance.
-        (Feature importances are less direct than logistic coefficients, 
-        but we can still show the most important features.)
+        Placeholder for plotting influential words.
+        KNN er en ikke-parametrisk metode og har ikke koeffisienter som kan 
+        brukes til å identifisere de mest innflytelsesrike ordene.
         """
-        assert self.pipeline is not None, "Pipeline must be built and fitted to plot influential words."
-        vectorizer: TfidfVectorizer = self.pipeline.named_steps['tfidf']
-        
-        # Her henter vi ut random forest
-        classifier: RandomForestClassifier = self.pipeline.named_steps['clf']
-        
-        # 'feature_importances_' gir oss en vekt for hver feature
-        importances = classifier.feature_importances_
-        feature_names = vectorizer.get_feature_names_out()
-        
-        # Finn de top N viktigste feature-idx
-        indices = np.argsort(importances)[-top_n:]
-        top_features = feature_names[indices]
-        top_values = importances[indices]
-
-        plt.figure(figsize=(10, 6))
-        plt.barh(top_features, top_values, color='green')
-        plt.xlabel('Feature Importance')
-        plt.title('Top Features by Importance (RandomForest)')
-        plt.gca().invert_yaxis()
-        plt.show()
+        print("Plotting of influential words is not available for KNN models.")
 
     def plot_confusion_matrix(self, X_test: list[str], y_test: list[int]) -> None:
         """
         Computes and plots the confusion matrix for the test set.
-        """
-
-        
+        """ 
         y_pred = self.predict(X_test)
         cm = confusion_matrix(y_test, y_pred)
         
@@ -180,6 +143,7 @@ class SentimentAnalyzer:
         plt.ylabel("True Label")
         plt.title("Confusion Matrix")
         plt.show()
+
 
 def main() -> None:
     # Load the processed data file.
@@ -209,7 +173,7 @@ def main() -> None:
     # Split data into training and test sets.
     X_train, X_test, y_train, y_test = train_test_split(X_list, y_list, test_size=0.2, random_state=42)
 
-    # Build and train the pipeline (now with RandomForest).
+    # Build and train the pipeline.
     analyzer.build_pipeline()
     analyzer.fit(X_train, y_train)
 
@@ -219,8 +183,9 @@ def main() -> None:
     # Plot the confusion matrix.
     analyzer.plot_confusion_matrix(X_test, y_test)
 
-    # Plot the most "important" words (feature importances).
+    # Inform that influential words cannot be plotted for KNN.
     analyzer.plot_influential_words()
+
 
 if __name__ == '__main__':
     main()
