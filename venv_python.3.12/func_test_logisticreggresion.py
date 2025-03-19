@@ -48,8 +48,12 @@ class SentimentAnalyzer:
         Uses a zero threshold:
             compound >= 0 -> positive (1)
             compound < 0  -> negative (0)
+        Her ignoreres negative_review dersom den er "NaN".
         """
-        text = f"{row['positive_review']} {row['negative_review']}"
+        pos_review = row['positive_review'] if pd.notnull(row['positive_review']) else ''
+        # Sjekk om negative_review er gyldig, dvs. ikke "NaN"
+        neg_review = row['negative_review'] if pd.notnull(row['negative_review']) and row['negative_review'] != "NaN" else ''
+        text = f"{pos_review} {neg_review}"
         score = self.sia.polarity_scores(text)['compound']
         return 1 if score >= 0 else 0
 
@@ -182,11 +186,14 @@ def main() -> None:
     data_file = "hotel_reviews_filtered.csv"
     df = pd.read_csv(data_file)
 
-    # Create combined review text if not already present.
+    # Erstatt "NaN" i negative_review-kolonnen med en tom streng slik at den ikke vektlegges.
+    df['negative_review'] = df['negative_review'].apply(lambda x: '' if str(x).strip() == "NaN" else x)
+
+    # Kombiner positive og negative anmeldelser til en samlet review_text.
     df['review_text'] = df['positive_review'].fillna('') + " " + df['negative_review'].fillna('')
 
     # Initialize the SentimentAnalyzer (set grid search flag as desired).
-    use_grid_search = False  # Set to True to perform grid search; False to skip it.
+    use_grid_search = False  # Sett til True for å utføre grid search; False for å hoppe over.
     analyzer = SentimentAnalyzer(use_grid_search=use_grid_search)
 
     # Apply VADER-based sentiment labeling.
